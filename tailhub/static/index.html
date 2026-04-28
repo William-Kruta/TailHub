@@ -1,0 +1,246 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>TailHub</title>
+  <meta name="description" content="A modern Tailscale file transfer interface" />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="/css/style.css" />
+</head>
+
+<body>
+  <!-- Sidebar -->
+  <aside class="sidebar" id="sidebar">
+    <div class="sidebar-brand">
+      <div class="brand-icon">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <circle cx="12" cy="12" r="3" />
+          <path
+            d="M12 2v4M12 18v4M4.93 4.93l2.83 2.83M16.24 16.24l2.83 2.83M2 12h4M18 12h4M4.93 19.07l2.83-2.83M16.24 7.76l2.83-2.83" />
+        </svg>
+      </div>
+      <span class="brand-name">TailHub</span>
+    </div>
+
+    <!-- Self node info -->
+    <div class="self-card" id="self-card">
+      <div class="self-avatar" id="self-avatar">?</div>
+      <div class="self-info">
+        <div class="self-name" id="self-name">Loading…</div>
+        <div class="self-ip-wrap">
+          <span class="self-ip" id="self-ip">—</span>
+          <button class="qr-btn" onclick="files.showQR()" title="Share with QR Code">📱</button>
+        </div>
+      </div>
+      <label class="ts-toggle" title="Disconnect Tailscale">
+        <input type="checkbox" id="ts-toggle-input" onchange="app.toggleTailscale(this.checked)" checked>
+        <span class="ts-slider"></span>
+      </label>
+    </div>
+
+    <!-- Nav -->
+    <nav class="sidebar-nav">
+      <button class="nav-item active" id="nav-network" onclick="app.navigate('network')">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <circle cx="12" cy="5" r="2" />
+          <circle cx="5" cy="19" r="2" />
+          <circle cx="19" cy="19" r="2" />
+          <path d="M12 7v4m0 0-5.5 6M12 11l5.5 6" />
+        </svg>
+        <span>Network</span>
+      </button>
+      <button class="nav-item" id="nav-send" onclick="app.navigate('send')">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <path d="M22 2L11 13M22 2l-7 20-4-9-9-4 20-7z" />
+        </svg>
+        <span>Send File</span>
+      </button>
+      <button class="nav-item" id="nav-inbox" onclick="app.navigate('inbox')">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <polyline points="22 12 16 12 14 15 10 15 8 12 2 12" />
+          <path
+            d="M5.45 5.11L2 12v6a2 2 0 002 2h16a2 2 0 002-2v-6l-3.45-6.89A2 2 0 0016.76 4H7.24a2 2 0 00-1.79 1.11z" />
+        </svg>
+        <span>Inbox</span>
+        <span class="badge" id="inbox-badge" style="display:none">0</span>
+      </button>
+    </nav>
+
+    <div class="sidebar-footer">
+      <button class="refresh-btn" onclick="app.refresh()" title="Refresh">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <polyline points="23 4 23 10 17 10" />
+          <path d="M20.49 15a9 9 0 11-2.12-9.36L23 10" />
+        </svg>
+        Refresh
+      </button>
+    </div>
+  </aside>
+
+  <!-- Main content -->
+  <main class="main">
+
+    <!-- Offline Overlay -->
+    <div class="offline-overlay hidden" id="offline-overlay">
+      <div class="offline-content">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+          <path
+            d="M10.68 13.31a16 16 0 003.41 2.6l1.27-1.27a2 2 0 012.11-.45 12.84 12.84 0 002.81.7 2 2 0 011.72 2v3a2 2 0 01-2.18 2 19.79 19.79 0 01-8.63-3.07 19.42 19.42 0 01-6-6 19.79 19.79 0 01-3.07-8.67A2 2 0 014.11 2h3a2 2 0 012 1.72 12.84 12.84 0 00.7 2.81 2 2 0 01-.45 2.11L8.09 9.91">
+          </path>
+          <line x1="23" y1="1" x2="1" y2="23"></line>
+        </svg>
+        <h2>Tailscale is Disconnected</h2>
+        <p>Your node is currently offline. Turn Tailscale back on in the sidebar to reconnect to your Tailnet.</p>
+        <button class="action-btn" onclick="app.toggleTailscale(true)">Reconnect Now</button>
+      </div>
+    </div>
+
+    <!-- Network panel -->
+    <section class="panel" id="panel-network">
+      <div class="panel-header" style="display:flex;justify-content:space-between;align-items:center;">
+        <div>
+          <h1>Network</h1>
+          <p class="panel-subtitle" id="peer-count">Scanning your Tailnet…</p>
+        </div>
+        <div class="search-wrap">
+          <label class="peer-filter">
+            <input type="checkbox" id="hide-offline-input" onchange="app.setHideOfflinePeers(this.checked)">
+            <span>Hide offline</span>
+          </label>
+          <input type="search" id="network-search" class="search-input" placeholder="Search peers..."
+            oninput="network.filterGrid(this.value)">
+        </div>
+      </div>
+      <div class="peer-grid" id="peer-grid">
+        <!-- Peer cards injected by network.js -->
+        <div class="skeleton-card"></div>
+        <div class="skeleton-card"></div>
+        <div class="skeleton-card"></div>
+      </div>
+    </section>
+
+    <!-- Send panel -->
+    <section class="panel hidden" id="panel-send">
+      <div class="panel-header">
+        <h1>Send a File</h1>
+        <p class="panel-subtitle">Drag &amp; drop or click to choose a file, then pick a destination.</p>
+      </div>
+
+      <div class="send-container">
+        <!-- Mode Toggle -->
+        <div class="send-mode-toggle">
+          <button class="mode-btn active" id="mode-file" onclick="files.setMode('file')">Send File</button>
+          <button class="mode-btn" id="mode-data" onclick="files.setMode('data')">Send Data</button>
+        </div>
+
+        <!-- Drop zone (File mode) -->
+        <div class="drop-zone" id="drop-zone">
+          <div class="drop-icon" id="drop-icon">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
+              <polyline points="17 8 12 3 7 8"></polyline>
+              <line x1="12" y1="3" x2="12" y2="15"></line>
+            </svg>
+          </div>
+          <div class="drop-label">Choose 1 or more files</div>
+          <div class="drop-sub">Drag & drop files or click to browse</div>
+          <input type="file" id="file-input" class="hidden-input" multiple>
+          <div class="file-preview" id="file-preview" style="display:none">
+            <div class="file-icon">📄</div>
+            <div class="file-meta">
+              <span class="file-name" id="preview-name"></span>
+              <span class="file-size" id="preview-size"></span>
+            </div>
+            <button class="clear-file" onclick="files.clearFile()" title="Remove">✕</button>
+          </div>
+        </div>
+
+        <!-- Text area (Data mode) -->
+        <div class="data-zone hidden" id="data-zone">
+          <textarea class="data-input" id="data-input"
+            placeholder="Type or paste raw text, JSON, logs, etc..."></textarea>
+        </div>
+
+        <!-- Target selector -->
+        <div class="target-group">
+          <label class="field-label" for="target-select">Send to:</label>
+          <select class="target-select" id="target-select">
+            <option value="">Select a peer…</option>
+          </select>
+        </div>
+
+        <!-- Progress -->
+        <div class="progress-wrap" id="progress-wrap" style="display:none">
+          <div class="progress-bar">
+            <div class="progress-fill" id="progress-fill"></div>
+          </div>
+          <span class="progress-label" id="progress-label">Sending…</span>
+        </div>
+
+        <button class="send-btn" id="send-btn" onclick="files.sendFile()" disabled>
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M22 2L11 13M22 2l-7 20-4-9-9-4 20-7z" />
+          </svg>
+          Send via Taildrop
+        </button>
+      </div>
+    </section>
+
+    <!-- Inbox panel -->
+    <section class="panel hidden" id="panel-inbox">
+      <div class="panel-header">
+        <h1>Inbox</h1>
+        <p class="panel-subtitle" id="inbox-dir">Files received via Taildrop</p>
+      </div>
+      <div class="inbox-actions">
+        <button class="action-btn" onclick="files.receiveFiles()">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4" />
+            <polyline points="7 10 12 15 17 10" />
+            <line x1="12" y1="15" x2="12" y2="3" />
+          </svg>
+          Pull Pending Files
+        </button>
+        <button class="action-btn secondary" onclick="files.loadInbox()">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <polyline points="23 4 23 10 17 10" />
+            <path d="M20.49 15a9 9 0 11-2.12-9.36L23 10" />
+          </svg>
+          Refresh
+        </button>
+      </div>
+      <div class="file-list" id="file-list">
+        <div class="empty-state" id="inbox-empty">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+            <polyline points="22 12 16 12 14 15 10 15 8 12 2 12" />
+            <path
+              d="M5.45 5.11L2 12v6a2 2 0 002 2h16a2 2 0 002-2v-6l-3.45-6.89A2 2 0 0016.76 4H7.24a2 2 0 00-1.79 1.11z" />
+          </svg>
+          <p>No files yet</p>
+          <span>Click "Pull Pending Files" to fetch incoming Taildrop transfers</span>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <!-- Preview Modal -->
+  <div class="modal hidden" id="preview-modal" onclick="if(event.target === this) files.closePreview()">
+    <div class="modal-content">
+      <button class="modal-close" onclick="files.closePreview()" title="Close">✕</button>
+      <div id="preview-body" class="preview-body"></div>
+    </div>
+  </div>
+
+  <!-- Toast notifications -->
+  <div class="toast-container" id="toast-container"></div>
+
+  <script src="/js/app.js"></script>
+  <script src="/js/network.js"></script>
+  <script src="/js/files.js"></script>
+</body>
+
+</html>
