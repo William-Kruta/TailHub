@@ -5,4 +5,4 @@ cd "$(dirname "$0")" || exit
 
 # Run the TailHub server using uv
 echo "🦔 Starting TailHub server..."
-uv run python main.py
+uv run python main.py "$@"

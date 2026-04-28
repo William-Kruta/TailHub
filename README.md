@@ -79,6 +79,12 @@ shell config path:
 ./alias.sh ~/.zshrc
 ```
 
+The alias also accepts an optional port:
+
+```bash
+tailhub 8050
+```
+
 ## Configuration
 
 TailHub reads these environment variables:
@@ -86,7 +92,7 @@ TailHub reads these environment variables:
 | Variable | Default | Description |
 | --- | --- | --- |
 | `TAILHUB_HOST` | `127.0.0.1` | Host/interface the FastAPI server binds to. |
-| `TAILHUB_PORT` | `8080` | Port for the web UI and API. |
+| `TAILHUB_PORT` | `8080` | Port for the web UI and API. Overridden by `tailhub <port>`. |
 | `TAILHUB_DOWNLOAD_DIR` | `~/Downloads/TailHub` | Directory where received Taildrop files are stored. |
 
 Example:
