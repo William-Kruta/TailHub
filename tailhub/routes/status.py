@@ -26,6 +26,7 @@ async def api_status():
         raise HTTPException(status_code=503, detail=str(exc))
 
     return {
+        "auth_url": status.auth_url,
         "self": {
             "dns_name": status.self_node.dns_name,
             "display_name": status.self_node.dns_name.split(".")[0] or status.self_node.hostname,
@@ -52,10 +53,13 @@ async def api_status():
 @router.post("/api/status/toggle")
 async def api_status_toggle(req: ToggleRequest):
     try:
-        await tailscale.toggle_state(req.up)
-        return {"status": "ok"}
+        result = await tailscale.toggle_state(req.up)
     except RuntimeError as exc:
         raise HTTPException(status_code=500, detail=str(exc))
+
+    if result.get("needs_login"):
+        return {"status": "needs_login", "auth_url": result.get("auth_url", "")}
+    return {"status": "ok"}
 
 @router.get("/api/ping/{target}")
 async def api_ping(target: str):
@@ -69,21 +73,26 @@ async def api_status_qr():
         status = await tailscale.get_status()
         ip = status.self_node.tailscale_ip
         if not ip:
-             raise HTTPException(status_code=400, detail="Tailscale IP not available")
-        
+            raise HTTPException(status_code=400, detail="Tailscale IP not available")
+
         # Construct the URL (we assume current PORT)
-        from tailhub.config import PORT
-        url = f"http://{ip}:{PORT}"
-        
+        from tailhub import config
+        url = f"http://{ip}:{config.PORT}"
+        if config.TOKEN:
+            # Let the scanning device authenticate without typing the token
+            url += f"/?token={config.TOKEN}"
+
         # Generate QR code in memory
         qr = qrcode.QRCode(version=1, box_size=10, border=5)
         qr.add_data(url)
         qr.make(fit=True)
-        
+
         img = qr.make_image(fill_color="black", back_color="white")
-        
+
         buf = io.BytesIO()
         img.save(buf, format="PNG")
         return Response(content=buf.getvalue(), media_type="image/png")
+    except HTTPException:
+        raise
     except Exception as exc:
         raise HTTPException(status_code=500, detail=str(exc))

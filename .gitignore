@@ -12,3 +12,9 @@ app_export_data.json
 
 # Local assistant/session files
 .codex
+
+# OS / editor noise
+.DS_Store
+
+# Claude Code local files
+.claude/

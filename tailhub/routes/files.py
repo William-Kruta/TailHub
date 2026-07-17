@@ -110,9 +110,12 @@ async def api_pending_files():
     """List files already downloaded to the local download directory."""
     DOWNLOAD_DIR.mkdir(parents=True, exist_ok=True)
     files = sorted(
-        {"name": f.name, "size": f.stat().st_size, "modified": f.stat().st_mtime}
-        for f in DOWNLOAD_DIR.iterdir()
-        if f.is_file()
+        (
+            {"name": f.name, "size": f.stat().st_size, "modified": f.stat().st_mtime}
+            for f in DOWNLOAD_DIR.iterdir()
+            if f.is_file()
+        ),
+        key=lambda entry: entry["name"],
     )
     return {"download_dir": str(DOWNLOAD_DIR), "files": files}
 

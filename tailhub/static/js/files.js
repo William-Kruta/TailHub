@@ -168,15 +168,14 @@ const files = (() => {
         }
         form.append('target', target);
 
-        // Fake incremental progress (true streaming isn't trivial without SSE)
-        const interval = setInterval(() => {
-            const cur = parseFloat(progressFill.style.width);
-            if (cur < 85) progressFill.style.width = `${cur + 5}%`;
-        }, 400);
-
         try {
-            await app.api('/api/files/send', { method: 'POST', body: form });
-            clearInterval(interval);
+            await uploadForm(form, fraction => {
+                // Upload is ~90% of the job; the Taildrop hop to the peer is the rest.
+                progressFill.style.width = `${Math.round(fraction * 90)}%`;
+                progressLabel.textContent = fraction < 1
+                    ? `Uploading ${displayName}… ${Math.round(fraction * 100)}%`
+                    : `Transferring ${displayName} to ${target} via Taildrop…`;
+            });
             progressFill.style.width = '100%';
             progressLabel.textContent = '✓ Sent successfully!';
             app.toast(`Sent ${displayName} to ${target}`, 'success');
@@ -186,7 +185,6 @@ const files = (() => {
                 btn.disabled = false;
             }, 2000);
         } catch (err) {
-            clearInterval(interval);
             progressLabel.textContent = `Error: ${err.message}`;
             progressFill.style.width = '100%';
             progressFill.style.background = 'var(--red)';
@@ -197,6 +195,42 @@ const files = (() => {
                 btn.disabled = false;
             }, 3000);
         }
+    }
+
+    // fetch() can't report upload progress; XHR can.
+    function uploadForm(form, onProgress) {
+        return new Promise((resolve, reject) => {
+            const xhr = new XMLHttpRequest();
+            xhr.open('POST', '/api/files/send');
+            const token = localStorage.getItem('tailhub.token');
+            if (token) xhr.setRequestHeader('X-TailHub-Token', token);
+
+            xhr.upload.onprogress = e => {
+                if (e.lengthComputable) onProgress(e.loaded / e.total);
+            };
+            xhr.onload = () => {
+                if (xhr.status >= 200 && xhr.status < 300) {
+                    resolve(JSON.parse(xhr.responseText));
+                } else {
+                    let detail;
+                    try { detail = JSON.parse(xhr.responseText).detail; } catch (e) { /* not JSON */ }
+                    reject(new Error(detail || `HTTP ${xhr.status}`));
+                }
+            };
+            xhr.onerror = () => reject(new Error('Network error'));
+            xhr.send(form);
+        });
+    }
+
+    // Drop payload from a peer card: prefill the send panel and fire.
+    async function sendDropped(peerName, dataTransfer) {
+        const dropped = await collectDroppedFiles(dataTransfer);
+        if (!dropped.length) return;
+        setMode('file');
+        setFiles(dropped);
+        preselectPeer(peerName);
+        app.navigate('send');
+        await sendFile();
     }
 
     // ---- Inbox -------------------------------------------------------
@@ -219,6 +253,9 @@ const files = (() => {
             empty.style.display = 'none';
             updateInboxBadge(data.files.length);
 
+            // Newest arrivals first
+            data.files.sort((a, b) => b.modified - a.modified);
+
             data.files.forEach((f, i) => {
                 const row = document.createElement('div');
                 row.className = 'file-row';
@@ -226,11 +263,12 @@ const files = (() => {
                 const ext = f.name.split('.').pop().toLowerCase();
                 const icons = { jpg: '🖼️', jpeg: '🖼️', png: '🖼️', pdf: '📄', zip: '🗜️', mp4: '🎬', mp3: '🎵', txt: '📝', json: '📝', md: '📝', py: '🐍', js: '📜' };
                 const safeName = escapeHtml(f.name);
+                const received = formatRelativeTime(f.modified);
                 row.innerHTML = `
           <div class="file-row-icon">${icons[ext] || '📄'}</div>
           <div class="file-row-meta">
             <div class="file-row-name">${safeName}</div>
-            <div class="file-row-size">${formatBytes(f.size)}</div>
+            <div class="file-row-size">${formatBytes(f.size)}${received ? ' · ' + received : ''}</div>
           </div>
           <button class="file-delete-btn" type="button" title="Delete ${safeName}" aria-label="Delete ${safeName}">✕</button>`;
 
@@ -262,11 +300,27 @@ const files = (() => {
         }
     }
 
+    // Background poll: pull pending Taildrop files so they arrive without
+    // manual clicks. Quiet unless something actually landed.
+    async function checkIncoming() {
+        try {
+            const data = await app.api('/api/files/receive', { method: 'POST' });
+            if (data.received.length > 0) {
+                const names = data.received.slice(0, 3).join(', ');
+                const extra = data.received.length > 3 ? ` +${data.received.length - 3} more` : '';
+                app.toast(`Received ${names}${extra}`, 'success');
+                await loadInbox();
+            }
+        } catch (e) {
+            // Backend offline or tailscale down — the status poll reports that.
+        }
+    }
+
     // ---- Previews ----------------------------------------------------
     async function openPreview(filename, ext) {
         const modal = document.getElementById('preview-modal');
         const body = document.getElementById('preview-body');
-        const url = `/api/files/download/${encodeURIComponent(filename)}`;
+        const url = app.assetUrl(`/api/files/download/${encodeURIComponent(filename)}`);
         const imageExts = ['jpg', 'jpeg', 'png', 'gif', 'webp'];
         const textExts = ['txt', 'json', 'md', 'py', 'js', 'html', 'css', 'csv', 'yaml', 'toml', 'sh'];
         const videoExts = ['mp4', 'webm'];
@@ -275,7 +329,11 @@ const files = (() => {
         body.innerHTML = 'Loading...';
 
         if (imageExts.includes(ext)) {
-            body.innerHTML = `<img src="${url}" alt="${filename}">`;
+            const img = document.createElement('img');
+            img.src = url;
+            img.alt = filename;
+            body.innerHTML = '';
+            body.appendChild(img);
         } else if (videoExts.includes(ext)) {
             body.innerHTML = `<video src="${url}" controls autoplay style="max-width:100%;max-height:80vh;"></video>`;
         } else if (textExts.includes(ext)) {
@@ -287,18 +345,22 @@ const files = (() => {
                 body.innerHTML = '';
                 body.appendChild(pre);
             } catch (e) {
-                body.innerHTML = `<p style="color:var(--red)">Failed to load text snippet: ${e.message}</p>`;
+                body.innerHTML = `<p style="color:var(--red)">Failed to load text snippet: ${escapeHtml(e.message)}</p>`;
             }
         } else {
             // Fallback: Show a download button for unsupported preview types
             body.innerHTML = `
         <div style="text-align:center;color:white;">
            <span style="font-size:3rem;">📄</span>
-           <h3 style="margin:16px 0">${filename}</h3>
+           <h3 style="margin:16px 0"></h3>
            <p style="color:var(--muted)">Preview not supported for this file type.</p>
-           <a href="${url}" download="${filename}" class="dw-btn">Download File</a>
+           <a class="dw-btn">Download File</a>
         </div>
       `;
+            body.querySelector('h3').textContent = filename;
+            const link = body.querySelector('.dw-btn');
+            link.href = url;
+            link.download = filename;
         }
     }
 
@@ -332,7 +394,7 @@ const files = (() => {
               Must be connected to your Tailnet.
             </p>
             <div style="background:white; padding:12px; border-radius:12px; display:inline-block;">
-              <img src="/api/status/qr?t=${Date.now()}" style="width:240px; height:240px; border-radius:0;">
+              <img src="${app.assetUrl(`/api/status/qr?t=${Date.now()}`)}" style="width:240px; height:240px; border-radius:0;">
             </div>
             <div style="margin-top:20px; font-family:monospace; color:var(--accent);">${ip}</div>
           </div>
@@ -344,6 +406,17 @@ const files = (() => {
         const badge = document.getElementById('inbox-badge');
         badge.textContent = n;
         badge.style.display = n > 0 ? 'flex' : 'none';
+    }
+
+    // f.modified is epoch seconds from the API
+    function formatRelativeTime(epochSeconds) {
+        if (!epochSeconds) return '';
+        const diff = Date.now() / 1000 - epochSeconds;
+        if (diff < 0) return '';
+        if (diff < 60) return 'just now';
+        if (diff < 3600) return `${Math.floor(diff / 60)}m ago`;
+        if (diff < 86400) return `${Math.floor(diff / 3600)}h ago`;
+        return `${Math.floor(diff / 86400)}d ago`;
     }
 
     function formatBytes(b) {
@@ -411,5 +484,5 @@ const files = (() => {
         setMode(sendMode);
     });
 
-    return { populatePeerSelect, preselectPeer, setMode, sendFile, clearFile, loadInbox, receiveFiles, closePreview, showQR };
+    return { populatePeerSelect, preselectPeer, setMode, sendFile, sendDropped, clearFile, loadInbox, receiveFiles, checkIncoming, closePreview, showQR };
 })();

@@ -8,9 +8,13 @@ files, and previewing downloaded files.
 
 ## Features
 
-- Tailnet status dashboard with local node and peer details.
+- Tailnet status dashboard with local node and peer details, refreshed live.
 - Online/offline peer list with search and quick send actions.
 - Send one file, multiple files, dropped folders, or raw text data through Taildrop.
+- Drop a file directly onto an online peer card to send it.
+- Real upload progress, and incoming Taildrop files are pulled into the inbox
+  automatically.
+- Click any IP address to copy it.
 - Multiple selected files and dropped folders are automatically zipped before sending.
 - Inbox view for files received via Taildrop.
 - Image, video, and text previews for downloaded files.
@@ -94,6 +98,7 @@ TailHub reads these environment variables:
 | `TAILHUB_HOST` | `127.0.0.1` | Host/interface the FastAPI server binds to. |
 | `TAILHUB_PORT` | `8080` | Port for the web UI and API. Overridden by `tailhub <port>`. |
 | `TAILHUB_DOWNLOAD_DIR` | `~/Downloads/TailHub` | Directory where received Taildrop files are stored. |
+| `TAILHUB_TOKEN` | *(empty)* | Optional API access token. When set, all `/api/*` requests must include it in an `X-TailHub-Token` header or `?token=` query parameter. The web UI prompts for it once and remembers it. |
 
 Example:
 
@@ -107,6 +112,18 @@ devices can reach, for example `TAILHUB_HOST=0.0.0.0`, and open:
 ```text
 http://<your-tailscale-ip>:8080
 ```
+
+The API has no authentication by default, which is fine for the loopback-only
+default bind. When binding to `0.0.0.0` (or any non-loopback interface), set
+`TAILHUB_TOKEN` so other machines cannot toggle Tailscale, send files as you,
+or read your downloads:
+
+```bash
+TAILHUB_HOST=0.0.0.0 TAILHUB_TOKEN="$(openssl rand -hex 16)" uv run python main.py
+```
+
+The QR code shown in the UI includes the token, so scanning it logs the other
+device in automatically.
 
 ## Systemd User Service
 
@@ -141,7 +158,7 @@ TailHub exposes these local API endpoints:
 | `GET` | `/api/status/qr` | Return a PNG QR code for the local TailHub URL. |
 | `GET` | `/api/ping/{target}` | Ping a peer with `tailscale ping -c 1`. |
 | `POST` | `/api/files/send` | Upload one or more files and send them to a peer with Taildrop. |
-| `POST` | `/api/files/receive` | Pull pending incoming Taildrop files into the download directory. |
+| `POST` | `/api/files/receive` | Pull pending incoming Taildrop files into the download directory. Returns only newly arrived files. |
 | `GET` | `/api/files/pending` | List files currently in the download directory. |
 | `GET` | `/api/files/download/{filename}` | Download or preview a received file. |
 | `DELETE` | `/api/files/{filename}` | Delete a received file from the download directory. |
@@ -168,10 +185,19 @@ tailhub/tailscale.py       # Async wrapper around the tailscale CLI
 tailhub/routes/status.py   # Status, QR, toggle, and ping routes
 tailhub/routes/files.py    # Send, receive, list, and download routes
 tailhub/static/            # HTML, CSS, and JavaScript frontend
+tests/                     # pytest suite for the API and CLI wrapper
 run.sh                     # Local development runner
 alias.sh                   # Installs a tailhub shell alias
 install.sh                 # systemd user service installer
 send_demo.py               # Example script for calling the send API
+```
+
+## Tests
+
+Run the test suite with:
+
+```bash
+uv run pytest
 ```
 
 ## Troubleshooting

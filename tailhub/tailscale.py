@@ -8,10 +8,26 @@ from __future__ import annotations
 import asyncio
 import json
 import pathlib
-import tempfile
 import re
+import shutil
 from dataclasses import dataclass, field
 from typing import Any
+
+# Locations to try when `tailscale` is not on PATH (macOS app bundle).
+_CLI_FALLBACKS = (
+    "/Applications/Tailscale.app/Contents/MacOS/Tailscale",
+)
+
+
+def _tailscale_bin() -> str:
+    """Resolve the tailscale CLI binary, preferring PATH."""
+    found = shutil.which("tailscale")
+    if found:
+        return found
+    for candidate in _CLI_FALLBACKS:
+        if pathlib.Path(candidate).is_file():
+            return candidate
+    return "tailscale"
 
 
 # ---------------------------------------------------------------------------
@@ -46,6 +62,8 @@ class SelfNode:
 class TailscaleStatus:
     self_node: SelfNode
     peers: list[Peer] = field(default_factory=list)
+    # Login URL reported by tailscaled when backend_state == "NeedsLogin"
+    auth_url: str = ""
 
 
 # ---------------------------------------------------------------------------
@@ -53,8 +71,9 @@ class TailscaleStatus:
 # ---------------------------------------------------------------------------
 
 async def _run(*args: str) -> tuple[str, str, int]:
-    """Run a command and return (stdout, stderr, returncode)."""
+    """Run a tailscale subcommand and return (stdout, stderr, returncode)."""
     proc = await asyncio.create_subprocess_exec(
+        _tailscale_bin(),
         *args,
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.PIPE,
@@ -69,7 +88,7 @@ async def _run(*args: str) -> tuple[str, str, int]:
 
 async def get_status() -> TailscaleStatus:
     """Parse `tailscale status --json` into a TailscaleStatus object."""
-    stdout, stderr, code = await _run("tailscale", "status", "--json")
+    stdout, stderr, code = await _run("status", "--json")
 
     if code != 0:
         raise RuntimeError(f"tailscale status failed: {stderr.strip()}")
@@ -101,7 +120,11 @@ async def get_status() -> TailscaleStatus:
     # Sort: online peers first, then alphabetically
     peers.sort(key=lambda p: (not p.online, p.display_name.lower()))
 
-    return TailscaleStatus(self_node=self_node, peers=peers)
+    return TailscaleStatus(
+        self_node=self_node,
+        peers=peers,
+        auth_url=data.get("AuthURL", "") or "",
+    )
 
 
 async def send_file(filepath: pathlib.Path, target: str) -> None:
@@ -110,54 +133,66 @@ async def send_file(filepath: pathlib.Path, target: str) -> None:
     `target` is the peer's hostname or DNS name (without colon).
     """
     # Trailing colon is required by tailscale file cp
-    stdout, stderr, code = await _run(
-        "tailscale", "file", "cp", str(filepath), f"{target}:"
-    )
+    stdout, stderr, code = await _run("file", "cp", str(filepath), f"{target}:")
     if code != 0:
         raise RuntimeError(f"tailscale file cp failed: {stderr.strip()}")
 
 
-async def get_pending_files(download_dir: pathlib.Path) -> list[str]:
+async def receive_files(download_dir: pathlib.Path) -> list[str]:
     """
-    Check for pending incoming files without blocking (`--wait=false`).
-    Moves files to `download_dir` and returns the list of filenames received.
+    Pull pending incoming files into `download_dir` without blocking
+    (`--wait=false`). Returns only the filenames that newly arrived.
     """
     download_dir.mkdir(parents=True, exist_ok=True)
+    before = {f.name for f in download_dir.iterdir() if f.is_file()}
+
     stdout, stderr, code = await _run(
-        "tailscale", "file", "get", "--wait=false", str(download_dir)
+        "file", "get", "--wait=false", str(download_dir)
     )
     # tailscale file get returns 0 even when there are no files.
-    # stderr contains the list of filenames when files are received.
     if code != 0 and "no files" not in stderr.lower():
         raise RuntimeError(f"tailscale file get failed: {stderr.strip()}")
 
-    # Collect what actually landed in the directory after the call
-    received = [f.name for f in download_dir.iterdir() if f.is_file()]
-    return sorted(received)
+    after = {f.name for f in download_dir.iterdir() if f.is_file()}
+    return sorted(after - before)
 
 
-async def receive_files(download_dir: pathlib.Path) -> list[str]:
+# `tailscale up` normally returns in a couple of seconds; if the node is not
+# authenticated it blocks forever waiting for a browser login, so cap it.
+TOGGLE_TIMEOUT = 30.0
+
+
+async def toggle_state(up: bool) -> dict[str, Any]:
     """
-    Pull all pending incoming files into `download_dir`.
-    Returns list of filenames that were moved there.
+    Run `tailscale up` or `tailscale down`.
+
+    If the node has never been authenticated (BackendState == "NeedsLogin"),
+    `tailscale up` would block forever waiting for a browser login — so we
+    return {"needs_login": True, "auth_url": ...} instead of running it.
     """
-    return await get_pending_files(download_dir)
+    if up:
+        status = await get_status()
+        if status.self_node.backend_state == "NeedsLogin":
+            return {"needs_login": True, "auth_url": status.auth_url}
 
-
-async def toggle_state(up: bool) -> None:
-    """Run `tailscale up` or `tailscale down`."""
     cmd = "up" if up else "down"
-    stdout, stderr, code = await _run("tailscale", cmd)
+    try:
+        stdout, stderr, code = await asyncio.wait_for(_run(cmd), TOGGLE_TIMEOUT)
+    except asyncio.TimeoutError:
+        raise RuntimeError(
+            f"tailscale {cmd} timed out — the node may need to be logged in first"
+        )
     if code != 0:
         raise RuntimeError(f"tailscale {cmd} failed: {stderr.strip()}")
+    return {"needs_login": False}
 
 
 async def ping(target: str) -> dict[str, Any]:
     """Run `tailscale ping -c 1 <target>` to get latency and transport type."""
-    # Timeout after 5s if ping hangs
+    # Timeout after 4s if ping hangs
     try:
         proc = await asyncio.create_subprocess_exec(
-            "tailscale", "ping", "-c", "1", f"{target}",
+            _tailscale_bin(), "ping", "-c", "1", f"{target}",
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
         )

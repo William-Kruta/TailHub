@@ -6,9 +6,12 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>TailHub</title>
   <meta name="description" content="A modern Tailscale file transfer interface" />
+  <meta name="theme-color" content="#0c0e18" />
+  <link rel="icon"
+    href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Ctext y='0.9em' font-size='90'%3E%F0%9F%A6%94%3C/text%3E%3C/svg%3E" />
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet" />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Space+Grotesk:wght@500;600;700&display=swap" rel="stylesheet" />
   <link rel="stylesheet" href="/css/style.css" />
 </head>
 
@@ -93,9 +96,9 @@
           </path>
           <line x1="23" y1="1" x2="1" y2="23"></line>
         </svg>
-        <h2>Tailscale is Disconnected</h2>
-        <p>Your node is currently offline. Turn Tailscale back on in the sidebar to reconnect to your Tailnet.</p>
-        <button class="action-btn" onclick="app.toggleTailscale(true)">Reconnect Now</button>
+        <h2 id="offline-title">Tailscale is Disconnected</h2>
+        <p id="offline-message">Your node is currently offline. Turn Tailscale back on in the sidebar to reconnect to your Tailnet.</p>
+        <button class="action-btn" id="offline-action" onclick="app.toggleTailscale(true)">Reconnect Now</button>
       </div>
     </div>
 
