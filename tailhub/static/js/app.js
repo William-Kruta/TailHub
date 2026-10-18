@@ -166,13 +166,13 @@ const app = (() => {
 
     // ---- Navigation --------------------------------------------------
     function navigate(panel, options = {}) {
-        if (!['network', 'send', 'inbox'].includes(panel)) panel = 'network';
+        if (!['network', 'send', 'inbox', 'player'].includes(panel)) panel = 'network';
         state.currentPanel = panel;
         state.preferences.panel = panel;
         localStorage.setItem('tailhub.panel', panel);
 
         // Toggle panels
-        ['network', 'send', 'inbox'].forEach(id => {
+        ['network', 'send', 'inbox', 'player'].forEach(id => {
             document.getElementById(`panel-${id}`).classList.toggle('hidden', id !== panel);
         });
 
@@ -182,6 +182,7 @@ const app = (() => {
 
         // Lazy-load inbox when navigating to it
         if (panel === 'inbox' && !options.skipLoad) files.loadInbox();
+        if (panel === 'player' && !options.skipLoad) player.loadLibrary();
     }
 
     function setHideOfflinePeers(hidden) {

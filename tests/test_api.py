@@ -43,6 +43,19 @@ def test_pending_lists_multiple_files(client, download_dir):
 
 
 # ---------------------------------------------------------------------------
+# /api/files/download — the Video Player seeks with byte-range requests
+# ---------------------------------------------------------------------------
+
+def test_download_supports_range_requests(client, download_dir):
+    (download_dir / "clip.mp4").write_bytes(b"0123456789")
+
+    res = client.get("/api/files/download/clip.mp4", headers={"Range": "bytes=2-5"})
+
+    assert res.status_code == 206
+    assert res.content == b"2345"
+
+
+# ---------------------------------------------------------------------------
 # receive_files — must return only newly received files, not old ones
 # ---------------------------------------------------------------------------
 
@@ -187,6 +200,87 @@ def test_toggle_up_reports_needs_login_instead_of_hanging(client, monkeypatch):
     body = res.json()
     assert body["status"] == "needs_login"
     assert body["auth_url"] == "https://login.tailscale.com/a/abc123"
+
+
+# ---------------------------------------------------------------------------
+# Send failures — an unreachable peer (asleep laptop still listed as online)
+# must surface as a clear 502 hint, not a bare 500, and the underlying
+# tailscale error must be logged server-side (the access log hides it).
+# ---------------------------------------------------------------------------
+
+async def test_send_file_raises_peer_unreachable_on_timeout(monkeypatch):
+    async def fake_run(*args):
+        return "", "put: dial tcp 100.107.241.120:54305: i/o timeout", 1
+
+    monkeypatch.setattr(tailscale, "_run", fake_run)
+
+    with pytest.raises(tailscale.PeerUnreachableError):
+        await tailscale.send_file(pathlib.Path("/tmp/x.txt"), "mac")
+
+
+async def test_send_file_raises_plain_runtime_error_on_other_failures(monkeypatch):
+    async def fake_run(*args):
+        return "", "some other failure", 1
+
+    monkeypatch.setattr(tailscale, "_run", fake_run)
+
+    with pytest.raises(RuntimeError) as excinfo:
+        await tailscale.send_file(pathlib.Path("/tmp/x.txt"), "mac")
+    assert not isinstance(excinfo.value, tailscale.PeerUnreachableError)
+
+
+def test_send_route_returns_502_hint_when_peer_unreachable(client, monkeypatch):
+    async def fake_send(filepath, target):
+        raise tailscale.PeerUnreachableError(
+            "tailscale file cp failed: put: dial tcp 100.107.241.120:54305: i/o timeout"
+        )
+
+    monkeypatch.setattr(tailscale, "send_file", fake_send)
+
+    res = client.post(
+        "/api/files/send",
+        files={"files": ("clawd.glb", b"glTF")},
+        data={"target": "williams-macbook-air"},
+    )
+
+    assert res.status_code == 502
+    detail = res.json()["detail"]
+    assert "williams-macbook-air" in detail
+    assert "asleep or offline" in detail
+
+
+def test_send_route_returns_500_on_other_failures(client, monkeypatch):
+    async def fake_send(filepath, target):
+        raise RuntimeError("tailscale file cp failed: something else")
+
+    monkeypatch.setattr(tailscale, "send_file", fake_send)
+
+    res = client.post(
+        "/api/files/send",
+        files={"files": ("clawd.glb", b"glTF")},
+        data={"target": "mac"},
+    )
+
+    assert res.status_code == 500
+    assert "something else" in res.json()["detail"]
+
+
+def test_send_route_logs_failure_server_side(client, monkeypatch, caplog):
+    async def fake_send(filepath, target):
+        raise RuntimeError("tailscale file cp failed: boom")
+
+    monkeypatch.setattr(tailscale, "send_file", fake_send)
+
+    import logging
+
+    with caplog.at_level(logging.ERROR):
+        client.post(
+            "/api/files/send",
+            files={"files": ("clawd.glb", b"glTF")},
+            data={"target": "mac"},
+        )
+
+    assert any("boom" in rec.message for rec in caplog.records)
 
 
 def test_toggle_up_times_out_instead_of_hanging_forever(client, monkeypatch):

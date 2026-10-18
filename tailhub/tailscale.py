@@ -127,15 +127,38 @@ async def get_status() -> TailscaleStatus:
     )
 
 
+class PeerUnreachableError(RuntimeError):
+    """The peer could not be reached — typically asleep but still listed online."""
+
+
+# stderr fragments from `tailscale file cp` that mean the peer itself could
+# not be reached (as opposed to bad arguments, permissions, etc.).
+_UNREACHABLE_MARKERS = (
+    "i/o timeout",
+    "timed out",
+    "connection refused",
+    "no route to host",
+    "unreachable",
+    "is offline",
+)
+
+
 async def send_file(filepath: pathlib.Path, target: str) -> None:
     """
     Send a file to a Tailscale peer using `tailscale file cp`.
     `target` is the peer's hostname or DNS name (without colon).
+
+    Raises PeerUnreachableError when the failure looks like the peer being
+    unreachable (asleep laptop still shown as online), RuntimeError otherwise.
     """
     # Trailing colon is required by tailscale file cp
     stdout, stderr, code = await _run("file", "cp", str(filepath), f"{target}:")
     if code != 0:
-        raise RuntimeError(f"tailscale file cp failed: {stderr.strip()}")
+        message = f"tailscale file cp failed: {stderr.strip()}"
+        lowered = stderr.lower()
+        if any(marker in lowered for marker in _UNREACHABLE_MARKERS):
+            raise PeerUnreachableError(message)
+        raise RuntimeError(message)
 
 
 async def receive_files(download_dir: pathlib.Path) -> list[str]:

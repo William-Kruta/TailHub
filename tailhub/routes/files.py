@@ -7,6 +7,7 @@ File transfer routes:
 """
 from __future__ import annotations
 
+import logging
 import pathlib
 import time
 import tempfile
@@ -19,6 +20,10 @@ from tailhub import tailscale
 from tailhub.config import DOWNLOAD_DIR
 
 router = APIRouter()
+
+# Route through uvicorn's error logger so failures show up in the terminal —
+# the access log only prints the status line, hiding the actual error detail.
+logger = logging.getLogger("uvicorn.error")
 
 # Max upload size: 2 GB (enforced at the route level via a simple check)
 MAX_UPLOAD_BYTES = 2 * 1024 ** 3
@@ -98,7 +103,17 @@ async def api_send_file(
         # Call tailscale.send_file which shells out to `tailscale file cp`
         try:
             await tailscale.send_file(final_path, target)
+        except tailscale.PeerUnreachableError as exc:
+            logger.error("Send to %s failed: %s", target, exc)
+            raise HTTPException(
+                status_code=502,
+                detail=(
+                    f"Could not reach {target} — it may be asleep or offline. "
+                    "Wake the device and try again."
+                ),
+            )
         except RuntimeError as exc:
+            logger.error("Send to %s failed: %s", target, exc)
             raise HTTPException(status_code=500, detail=str(exc))
 
     elapsedMs = int((time.time() - start) * 1000)

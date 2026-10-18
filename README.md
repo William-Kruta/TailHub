@@ -18,6 +18,8 @@ files, and previewing downloaded files.
 - Multiple selected files and dropped folders are automatically zipped before sending.
 - Inbox view for files received via Taildrop.
 - Image, video, and text previews for downloaded files.
+- Video Player tab for watching videos or listening to audio from the inbox or
+  from the device you're browsing on.
 - QR code for opening TailHub from another device on your Tailnet.
 - Optional systemd user service installer.
 
